@@ -25,7 +25,6 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class MessageDataCollector extends DataCollector
 {
     private $container;
-    private $isSpool;
 
     /**
      * Constructor.
@@ -34,12 +33,10 @@ class MessageDataCollector extends DataCollector
      * to avoid the creation of these objects when no emails are sent.
      *
      * @param ContainerInterface $container A ContainerInterface instance
-     * @param Boolean            $isSpool
      */
-    public function __construct(ContainerInterface $container, $isSpool)
+    public function __construct(ContainerInterface $container)
     {
         $this->container = $container;
-        $this->isSpool = $isSpool;
     }
 
     /**
@@ -47,32 +44,55 @@ class MessageDataCollector extends DataCollector
      */
     public function collect(Request $request, Response $response, \Exception $exception = null)
     {
+        $this->data = array(
+            'mailer' => array(),
+            'messageCount' => 0,
+            'defaultMailer' => '',
+        );
         // only collect when Swiftmailer has already been initialized
         if (class_exists('Swift_Mailer', false)) {
-            $logger = $this->container->get('swiftmailer.plugin.messagelogger');
-            $this->data['messages']     = $logger->getMessages();
-            $this->data['messageCount'] = $logger->countMessages();
-        } else {
-            $this->data['messages']     = array();
-            $this->data['messageCount'] = 0;
+            $mailers = $this->container->getParameter('swiftmailer.mailers');
+            foreach ($mailers as $name => $mailer) {
+                if ($this->container->getParameter('swiftmailer.default_mailer') == $name || 'default' == $name) {
+                    $this->data['defaultMailer'] = $name;
+                }
+                $loggerName = sprintf('swiftmailer.mailer.%s.plugin.messagelogger', $name);
+                if ($this->container->has($loggerName)) {
+                    $logger = $this->container->get($loggerName);
+                    $this->data['mailer'][$name] = array(
+                        'messages' => $logger->getMessages(),
+                        'messageCount' => $logger->countMessages(),
+                        'isSpool' => $this->container->getParameter(sprintf('swiftmailer.mailer.%s.spool.enabled', $name)),
+                    );
+                    $this->data['messageCount'] += $logger->countMessages();
+                }
+            }
         }
-
-        $this->data['isSpool'] = $this->isSpool;
     }
 
-    public function getMessageCount()
+    public function getMailers()
     {
-        return $this->data['messageCount'];
+        return array_keys($this->data['mailer']);
     }
 
-    public function getMessages()
+    public function getMessageCount($name = null)
     {
-        return $this->data['messages'];
+        return is_null($name) ? $this->data['messageCount'] : $this->data['mailer'][$name]['messageCount'];
     }
 
-    public function isSpool()
+    public function getMessages($name)
     {
-        return $this->data['isSpool'];
+        return $this->data['mailer'][$name]['messages'];
+    }
+
+    public function isSpool($name)
+    {
+        return $this->data['mailer'][$name]['isSpool'];
+    }
+
+    public function isDefaultMailer($name)
+    {
+        return $this->data['defaultMailer'] == $name ? true : false;
     }
 
     /**
